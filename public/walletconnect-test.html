@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WalletConnect Test - TheBotique</title>
+  <script src="https://unpkg.com/@walletconnect/web3modal@2.7.1/dist/index.umd.js"></script>
+  <script src="https://unpkg.com/@walletconnect/ethereum-provider@2.11.0/dist/index.umd.js"></script>
+  <script src="https://unpkg.com/ethers@6.7.0/dist/ethers.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 100%);
+      color: #e0e0e0;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container { max-width: 500px; margin: 0 auto; }
+    h1 { color: #00F0FF; margin-bottom: 10px; font-size: 24px; text-align: center; }
+    .subtitle { color: #888; text-align: center; margin-bottom: 30px; font-size: 14px; }
+    .card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .btn {
+      background: linear-gradient(135deg, #00F0FF, #00a0aa);
+      color: #000;
+      border: none;
+      padding: 16px 24px;
+      border-radius: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      font-size: 16px;
+      margin-bottom: 12px;
+      transition: transform 0.2s, opacity 0.2s;
+    }
+    .btn:hover { transform: translateY(-2px); opacity: 0.95; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .btn-secondary {
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+    }
+    .btn-wc {
+      background: linear-gradient(135deg, #3B99FC, #2D7DD2);
+    }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px;
+      background: rgba(0,0,0,0.3);
+      border-radius: 12px;
+      margin-bottom: 16px;
+    }
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #666;
+      flex-shrink: 0;
+    }
+    .dot.green { background: #00ff88; box-shadow: 0 0 10px #00ff88; }
+    .dot.red { background: #ff4444; }
+    .dot.yellow { background: #ffaa00; }
+    .address {
+      font-family: monospace;
+      font-size: 13px;
+      word-break: break-all;
+      color: #00F0FF;
+      background: rgba(0,240,255,0.1);
+      padding: 12px;
+      border-radius: 8px;
+      margin-top: 12px;
+    }
+    .log {
+      background: #000;
+      border-radius: 12px;
+      padding: 16px;
+      font-family: monospace;
+      font-size: 11px;
+      max-height: 200px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .log-entry { margin-bottom: 4px; opacity: 0.8; }
+    .log-entry.error { color: #ff6b6b; }
+    .log-entry.success { color: #51cf66; }
+    .log-entry.info { color: #74c0fc; }
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin: 20px 0;
+      color: #666;
+      font-size: 12px;
+    }
+    .divider::before, .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: rgba(255,255,255,0.1);
+    }
+    .wallet-icon { font-size: 24px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔗 Connect Wallet</h1>
+    <p class="subtitle">TheBotique - AI Agent Marketplace</p>
+    
+    <div class="card">
+      <div class="status">
+        <div class="dot" id="dot-status"></div>
+        <span id="status-text">Not connected</span>
+      </div>
+      
+      <div id="address-display" style="display:none;">
+        <div class="address" id="wallet-address"></div>
+      </div>
+      
+      <div id="connect-buttons">
+        <button class="btn" onclick="connectBrowserWallet()">
+          <span class="wallet-icon">🦊</span> Connect Browser Wallet
+        </button>
+        
+        <div class="divider">or scan QR code</div>
+        
+        <button class="btn btn-wc" onclick="connectWalletConnect()">
+          <span class="wallet-icon">📱</span> WalletConnect (QR Code)
+        </button>
+      </div>
+      
+      <div id="connected-actions" style="display:none;">
+        <button class="btn btn-secondary" onclick="disconnect()">Disconnect</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="font-size: 14px; color: #888; margin-bottom: 12px;">Debug Log</h3>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+
+  <script>
+    let provider = null;
+    let signer = null;
+    
+    const WALLETCONNECT_PROJECT_ID = '0f675d6a99e4637f1a98c8e3f53e6222'; // Public demo ID
+    
+    function log(msg, type = 'info') {
+      const logEl = document.getElementById('log');
+      const entry = document.createElement('div');
+      entry.className = 'log-entry ' + type;
+      entry.textContent = new Date().toLocaleTimeString() + ' | ' + msg;
+      logEl.appendChild(entry);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    
+    function updateUI(connected, address = null) {
+      const dot = document.getElementById('dot-status');
+      const statusText = document.getElementById('status-text');
+      const addressDisplay = document.getElementById('address-display');
+      const addressEl = document.getElementById('wallet-address');
+      const connectBtns = document.getElementById('connect-buttons');
+      const connectedActions = document.getElementById('connected-actions');
+      
+      if (connected && address) {
+        dot.className = 'dot green';
+        statusText.textContent = 'Connected';
+        addressEl.textContent = address;
+        addressDisplay.style.display = 'block';
+        connectBtns.style.display = 'none';
+        connectedActions.style.display = 'block';
+      } else {
+        dot.className = 'dot';
+        statusText.textContent = 'Not connected';
+        addressDisplay.style.display = 'none';
+        connectBtns.style.display = 'block';
+        connectedActions.style.display = 'none';
+      }
+    }
+    
+    // Browser wallet (MetaMask, etc.)
+    async function connectBrowserWallet() {
+      log('Attempting browser wallet connection...');
+      
+      if (typeof window.ethereum === 'undefined') {
+        log('No browser wallet found!', 'error');
+        alert('No wallet detected. Please install MetaMask or use WalletConnect.');
+        return;
+      }
+      
+      try {
+        const browserProvider = new ethers.BrowserProvider(window.ethereum);
+        const accounts = await browserProvider.send('eth_requestAccounts', []);
+        
+        if (accounts.length > 0) {
+          provider = browserProvider;
+          signer = await provider.getSigner();
+          const address = await signer.getAddress();
+          
+          log('Connected: ' + address, 'success');
+          updateUI(true, address);
+          
+          // Check chain
+          const network = await provider.getNetwork();
+          log('Chain ID: ' + network.chainId, 'info');
+          if (network.chainId !== 8453n) {
+            log('Warning: Not on Base (8453). Payments require Base.', 'error');
+          }
+        }
+      } catch (error) {
+        log('Error: ' + error.message, 'error');
+      }
+    }
+    
+    // WalletConnect
+    async function connectWalletConnect() {
+      log('Initializing WalletConnect...');
+      
+      try {
+        const WalletConnectProvider = window.WalletConnectEthereumProvider?.EthereumProvider;
+        
+        if (!WalletConnectProvider) {
+          log('WalletConnect SDK not loaded, using fallback...', 'error');
+          // Fallback: open WalletConnect modal via URI
+          window.open('https://walletconnect.com/', '_blank');
+          return;
+        }
+        
+        const wcProvider = await WalletConnectProvider.init({
+          projectId: WALLETCONNECT_PROJECT_ID,
+          chains: [8453], // Base mainnet
+          showQrModal: true,
+          qrModalOptions: {
+            themeMode: 'dark'
+          }
+        });
+        
+        log('Connecting via WalletConnect...', 'info');
+        await wcProvider.connect();
+        
+        provider = new ethers.BrowserProvider(wcProvider);
+        signer = await provider.getSigner();
+        const address = await signer.getAddress();
+        
+        log('Connected via WalletConnect: ' + address, 'success');
+        updateUI(true, address);
+        
+        // Listen for disconnect
+        wcProvider.on('disconnect', () => {
+          log('WalletConnect disconnected', 'info');
+          updateUI(false);
+        });
+        
+      } catch (error) {
+        log('WalletConnect error: ' + error.message, 'error');
+      }
+    }
+    
+    function disconnect() {
+      log('Disconnecting...');
+      provider = null;
+      signer = null;
+      updateUI(false);
+    }
+    
+    // Init
+    window.addEventListener('load', () => {
+      log('Page loaded');
+      if (typeof window.ethereum !== 'undefined') {
+        log('Browser wallet detected', 'success');
+      } else {
+        log('No browser wallet - use WalletConnect', 'info');
+      }
+    });
+  </script>
+</body>
+</html>

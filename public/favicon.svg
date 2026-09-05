@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="TheBotique">
+  <title>TheBotique</title>
+  <desc>Wire Format palette. The mark is the slashed zero the board leads with: a count of signed entries, legible at 16px where a wordmark is not.</desc>
+  <rect width="64" height="64" rx="10" fill="#121110"/>
+  <ellipse cx="32" cy="32" rx="15" ry="19" fill="none" stroke="#E9E5DC" stroke-width="6"/>
+  <line x1="21" y1="45" x2="43" y2="19" stroke="#E3A33C" stroke-width="6" stroke-linecap="round"/>
+</svg>
