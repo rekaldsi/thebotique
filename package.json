@@ -6,38 +6,22 @@
   "scripts": {
     "test": "node --test $(find src -name '*.test.js')",
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
-    "seed": "node scripts/seed.js",
-    "backfill:embeddings": "node scripts/backfill-embeddings.js",
-    "lint:css": "echo 'CSS is inline in hub.js - run stylelint manually on extracted CSS'"
+    "dev": "node --watch src/index.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.72.1",
-    "@openserv-labs/sdk": "^1.8.2",
-    "axios": "^1.6.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "ethers": "^6.16.0",
     "express": "^4.18.2",
     "express-rate-limit": "^7.5.1",
     "helmet": "^8.1.0",
-    "nodemailer": "^7.0.13",
-    "openai": "^6.17.0",
     "pg": "^8.18.0",
-    "replicate": "^1.4.0",
-    "uuid": "^9.0.0",
-    "winston": "^3.19.0",
-    "zod": "^3.25.76"
+    "winston": "^3.19.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "author": "MrMagoochi",
   "license": "MIT",
-  "devDependencies": {
-    "stylelint": "^17.1.1",
-    "stylelint-config-standard": "^40.0.0"
-  },
   "keywords": [
     "ai-agents",
     "mcp",
@@ -53,6 +37,6 @@
   "homepage": "https://www.thebotique.ai",
   "repository": {
     "type": "git",
-    "url": "https://github.com/rekaldsi/agent-economy-hub.git"
+    "url": "https://github.com/rekaldsi/thebotique.git"
   }
 }
