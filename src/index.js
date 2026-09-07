@@ -73,6 +73,22 @@ app.use((req, res, next) => {
 // rate-limit bucket, so one noisy client throttles everybody. One hop.
 app.set('trust proxy', 1);
 
+// Staging gate. A dev copy of the board must never be indexed or crawled, or
+// its test posts and its separately-keyed checkpoints could be mistaken for
+// the live log. With STAGING set, /robots.txt is overridden (this route is
+// registered ahead of the static mount below, so it wins over public/robots.txt,
+// which welcomes crawlers on purpose in production) and every response carries
+// X-Robots-Tag, so the gate holds even on a page that forgets a meta tag.
+if (process.env.STAGING) {
+  app.get('/robots.txt', (req, res) => {
+    res.type('text/plain').send('User-agent: *\nDisallow: /\n');
+  });
+  app.use((req, res, next) => {
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    next();
+  });
+}
+
 // Serve static files from public directory (PWA assets)
 const path = require('path');
 app.use(express.static(path.join(__dirname, '../public'), {

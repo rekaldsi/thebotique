@@ -55,13 +55,13 @@ function badge(tone, text) {
 
 function form(value) {
   return `<form method="get" action="/verify" class="card" style="border-color:var(--ink)">
-<label for="post" style="display:block;font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);margin-bottom:6px">Moltbook post URL or id</label>
-<div style="display:flex;gap:10px;flex-wrap:wrap">
-<input id="post" name="post" value="${esc(value || '')}" placeholder="https://www.moltbook.com/… or 7398a138-526f-46d0-a641-225a4ced4a71"
- style="flex:1;min-width:280px;background:var(--ground-inset);color:var(--ink);border:1px solid var(--rule-strong);padding:10px;font-family:var(--mono);font-size:13px">
+<label for="post" style="display:block;font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2);margin-bottom:6px">Paste a signed post, or a Moltbook post URL / id</label>
+<textarea id="post" name="post" rows="4" placeholder="Paste the whole post, including its ⟦sigil/1 …⟧ block — or a Moltbook post URL / id"
+ style="width:100%;box-sizing:border-box;resize:vertical;background:var(--ground-inset);color:var(--ink);border:1px solid var(--rule-strong);padding:10px;font-family:var(--mono);font-size:13px">${esc(value || '')}</textarea>
+<div style="display:flex;justify-content:flex-end;margin-top:10px">
 <button type="submit" class="cta">Check it</button>
 </div>
-<p class="note" style="margin:12px 0 0">Reads Moltbook's public API. Nothing is stored and no account is needed.</p>
+<p class="note" style="margin:12px 0 0">A pasted post is checked directly &mdash; nothing is fetched or stored. A Moltbook id is read from Moltbook's public API. No account needed.</p>
 </form>`;
 }
 
@@ -72,17 +72,37 @@ function mount(router) {
 
     if (input) {
       try {
-        const post = await fetchPost(input);
-        const author = post.author && post.author.name;
-        const v = E.verifyContent(post.content, { author, platform: 'moltbook' });
-        const meta = VERDICT[v.outcome] || VERDICT.malformed;
+        // Two ways in. A pasted post carries its own ⟦sigil/1 …⟧ envelope, so
+        // it is checked directly with nothing fetched; a Moltbook URL/id is
+        // pulled from Moltbook's public API and then checked. Test for the
+        // envelope first — a self-contained signed post never needs a network
+        // call, and its own base64url could, very rarely, look UUID-shaped.
+        let v, body, headline, sourceRows;
+        if (E.RE.test(input)) {
+          v = E.verifyContent(input, { platform: 'moltbook' });
+          body = E.normaliseBody(input);
+          headline = 'Pasted post';
+          sourceRows = '<dt>Source</dt><dd>the text you pasted <span class="muted">· not fetched from anywhere</span></dd>';
+        } else if (UUID.test(input)) {
+          const post = await fetchPost(input);
+          const author = post.author && post.author.name;
+          v = E.verifyContent(post.content, { author, platform: 'moltbook' });
+          body = E.normaliseBody(post.content);
+          headline = esc(post.title || 'Untitled');
+          sourceRows =
+            `<dt>Posted by</dt><dd>${esc(author || 'unknown')}${post.author && post.author.isClaimed ? ' <span class="muted">· has a claimed human owner</span>' : ' <span class="muted">· no claimed human owner</span>'}</dd>`
+            + `<dt>Posted at</dt><dd><span class="date">${esc(String(post.created_at || '').slice(0, 19))}Z</span></dd>`
+            + `<dt>Submolt</dt><dd>${esc((post.submolt && post.submolt.display_name) || '—')}</dd>`;
+        } else {
+          throw new Error('Paste a signed post — the whole thing, including its ⟦sigil/1 …⟧ block — or a Moltbook post URL or id.');
+        }
 
+        const meta = VERDICT[v.outcome] || VERDICT.malformed;
         // Only worth a network call when there is a valid signature carrying a
         // domain claim. A failed signature's domain claim is meaningless.
         let dom = null;
         if (v.outcome === 'verified' && v.domain) dom = await D.confirmsKey(v.domain, v.pubkey);
 
-        const body = E.normaliseBody(post.content);
         result = `
 <div class="card" style="${meta.tone === 'bad' ? 'border-color:var(--accent)' : 'border-color:var(--ink)'}">
 <p style="margin:0 0 10px">${badge(meta.tone, meta.label)}${
@@ -90,17 +110,15 @@ function mount(router) {
 }</p>
 <p style="margin:0 0 14px">${esc(meta.line)}</p>
 <dl class="kv" style="margin:0">
-<dt>Posted by</dt><dd>${esc(author || 'unknown')}${post.author && post.author.isClaimed ? ' <span class="muted">· has a claimed human owner</span>' : ' <span class="muted">· no claimed human owner</span>'}</dd>
+${sourceRows}
 ${v.handle ? `<dt>Signature claims</dt><dd>${esc(v.handle)}</dd>` : ''}
 ${v.pubkey ? `<dt>Key</dt><dd><code>${esc(v.pubkey)}</code></dd>` : ''}
 ${v.domain ? `<dt>Domain claimed</dt><dd>${esc(v.domain)}${dom && !dom.confirmed ? ` <span class="muted">— ${esc(dom.reason)}</span>` : ''}</dd>` : ''}
 ${v.ts ? `<dt>Signed at</dt><dd><span class="date">${esc(v.ts)}</span></dd>` : ''}
-<dt>Posted at</dt><dd><span class="date">${esc(String(post.created_at || '').slice(0, 19))}Z</span></dd>
-<dt>Submolt</dt><dd>${esc((post.submolt && post.submolt.display_name) || '—')}</dd>
 </dl>
 </div>
 
-<h2><span class="num">The post</span>${esc(post.title || 'Untitled')}</h2>
+<h2><span class="num">The post</span>${headline}</h2>
 <p style="white-space:pre-wrap">${esc(body)}</p>
 `;
       } catch (e) {
@@ -177,21 +195,35 @@ stores nothing.</p>`
     }));
   });
 
-  // Machine-readable, for a CLI or another agent.
+  // Machine-readable, for a CLI or another agent. Accepts either a signed post
+  // pasted verbatim (?post=<the whole thing incl. its ⟦sigil/1 …⟧ block>) or a
+  // Moltbook post URL/id. The envelope is tested for first — a self-contained
+  // post is checked directly, nothing fetched.
   router.get('/api/verify', async (req, res) => {
+    const input = String(req.query.post || '');
     try {
-      const post = await fetchPost(req.query.post);
-      const author = post.author && post.author.name;
-      const v = E.verifyContent(post.content, { author, platform: 'moltbook' });
+      let v, source, post = null, author = null;
+      if (E.RE.test(input)) {
+        v = E.verifyContent(input, { platform: 'moltbook' });
+        source = 'pasted';
+      } else if (UUID.test(input)) {
+        post = await fetchPost(input);
+        author = post.author && post.author.name;
+        v = E.verifyContent(post.content, { author, platform: 'moltbook' });
+        source = 'moltbook';
+      } else {
+        throw new Error('Provide a signed post (including its ⟦sigil/1 …⟧ block) or a Moltbook post URL/id.');
+      }
       let domain_confirmation = null;
       if (v.outcome === 'verified' && v.domain) domain_confirmation = await D.confirmsKey(v.domain, v.pubkey);
       res.json({
-        ok: true, post_id: post.id, author,
-        author_has_claimed_owner: !!(post.author && post.author.isClaimed),
+        ok: true, source,
+        post_id: post ? post.id : null, author,
+        author_has_claimed_owner: post ? !!(post.author && post.author.isClaimed) : null,
         outcome: v.outcome, detail: v.detail,
         signed_handle: v.handle || null, pubkey: v.pubkey || null,
         domain: v.domain || null, domain_confirmation,
-        signed_at: v.ts || null, posted_at: post.created_at
+        signed_at: v.ts || null, posted_at: post ? post.created_at : null
       });
     } catch (e) {
       res.status(400).json({ ok: false, error: e.message });
