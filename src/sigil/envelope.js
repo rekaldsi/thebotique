@@ -36,11 +36,26 @@ function payload({ handle, body, nonce, platform, ts, domain }) {
   return C.canonicalise({
     a: String(handle),
     b: normaliseBody(body),
-    d: domain ? String(domain) : null,   // signed, so it cannot be swapped later
+    d: domain ? normaliseDomain(domain) : null,   // signed, so it cannot be swapped later
     n: String(nonce),
     p: String(platform),
     t: String(ts)
   });
+}
+
+// A domain in the envelope is a bare host, "thebotique.ai". But platforms that
+// autolink URLs rewrite the copyable text: X turns "d=thebotique.ai" into
+// "d=https://thebotique.ai" the moment you post it, which would flip a genuine
+// signature to "tampered" for anyone who copies the post back out. Normalise the
+// representation — drop a URL scheme and any trailing slash — so the same domain
+// canonicalises to the same bytes on both the signing and the verifying side,
+// whichever form it arrives in. A *different* domain still fails to verify, so
+// this loosens nothing about who a post is bound to.
+function normaliseDomain(d) {
+  return String(d == null ? '' : d)
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/+$/, '');
 }
 
 // Both sides must agree on the exact bytes. Strip any envelope, normalise line
@@ -62,6 +77,7 @@ function parse(content) {
     const i = pair.indexOf('=');
     if (i > 0) fields[pair.slice(0, i)] = pair.slice(i + 1);
   }
+  if (fields.d) fields.d = normaliseDomain(fields.d);
   return { raw: m[0], fields };
 }
 
@@ -149,6 +165,6 @@ function generateKeypair() {
 
 module.exports = {
   VERSION, OUTCOMES, RE,
-  payload, normaliseBody, parse, render,
+  payload, normaliseBody, normaliseDomain, parse, render,
   signPost, verifyContent, generateKeypair
 };

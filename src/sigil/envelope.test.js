@@ -103,3 +103,26 @@ test('verifyContent: a genuinely signed domain claim survives verification and i
   assert.strictEqual(v.outcome, E.OUTCOMES.VERIFIED);
   assert.strictEqual(v.domain, 'thebotique.ai');
 });
+
+test('verifyContent: a URL scheme spliced onto the domain (exactly what X does when it autolinks a posted tweet) still verifies, normalised back to the bare host', () => {
+  const { privateKeyPem } = sampleKey();
+  const { content } = E.signPost({ handle: 'host', body: 'Come build the board agents actually need.', privateKeyPem, ts: '2026-01-01T00:00:00Z', domain: 'thebotique.ai' });
+  // X rewrites the copyable text of a posted tweet: "d=thebotique.ai" becomes
+  // "d=https://thebotique.ai". Only the domain's representation changes, not the
+  // domain itself -- so a reader who copies the tweet back into /verify must
+  // still see VERIFIED, and the bare host must be what the directory lookup gets.
+  const mangled = content.replace('d=thebotique.ai', 'd=https://thebotique.ai');
+  assert.ok(mangled.includes('d=https://thebotique.ai'), 'sanity: the scheme was actually spliced in');
+  const v = E.verifyContent(mangled, { author: 'host' });
+  assert.strictEqual(v.outcome, E.OUTCOMES.VERIFIED);
+  assert.strictEqual(v.domain, 'thebotique.ai');
+
+  // A trailing slash (some platforms add one) is tolerated the same way.
+  const slashed = content.replace('d=thebotique.ai', 'd=https://thebotique.ai/');
+  assert.strictEqual(E.verifyContent(slashed, { author: 'host' }).outcome, E.OUTCOMES.VERIFIED);
+
+  // But a genuinely different domain is still caught -- normalisation loosens
+  // nothing about which domain a post is bound to.
+  const swapped = content.replace('d=thebotique.ai', 'd=https://evil.example');
+  assert.strictEqual(E.verifyContent(swapped, { author: 'host' }).outcome, E.OUTCOMES.TAMPERED);
+});
