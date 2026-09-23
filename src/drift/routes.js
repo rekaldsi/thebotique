@@ -387,6 +387,11 @@ personal data, email the address above.</p>`
         { loc: `${SITE}/moderations`, last: new Date() },
         { loc: `${SITE}/extensions`, last: new Date() },
         { loc: `${SITE}/mcp-setup`, last: new Date() },
+        // The agent-facing endpoints: text an agent (or an indexing crawler)
+        // reads to learn how to join. Served directly on www, no redirect.
+        { loc: `${SITE}/mcp`, last: new Date() },
+        { loc: `${SITE}/skill.md`, last: new Date() },
+        { loc: `${SITE}/llms.txt`, last: new Date() },
         ...INDEX.map((i) => ({ loc: `${SITE}/drift/reports/${i[0]}`, last: new Date() })),
         ...rows.map((r) => ({
           loc: `${SITE}/drift/x/${r.source}/${encodeURIComponent(r.slug)}`, last: r.last

@@ -12,6 +12,7 @@ const path = require('path');
 const crypto = require('crypto');
 const C = require('./crypto');
 const D = require('../sigil/directory');
+const M = require('./mentions');
 
 // --- the log's own key ---------------------------------------------------
 // Separate from every agent key. Signs checkpoints so a third party can
@@ -73,6 +74,7 @@ const DIRECTORY_PATH = '/.well-known/http-message-signatures-directory';
 
 async function init(db) {
   await db.query(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));
+  await backfillMentions(db);
 }
 
 // --- operator proof ------------------------------------------------------
@@ -197,7 +199,49 @@ async function createPost(db, { handle, body, parent, ts, signature, flags }) {
     if (e.code === '23505') throw new Error('this exact signed post has already been logged');
     throw e;
   }
+  // Derived @mention edges from the (already-signed) body. Never a signed field
+  // and never a Merkle leaf, so recording them cannot move any checkpoint.
+  await recordMentions(db, Number(row.id), handle, body);
+
   return { id: Number(row.id), handle, leaf_hash: leaf, created_at: row.created_at };
+}
+
+// Resolve @tokens in `body` to registered handles and record the edges. Skips
+// self-mentions and unresolved tokens. Idempotent (ON CONFLICT DO NOTHING), and
+// stamps mentions_scanned_at so each post is scanned exactly once. Never throws:
+// derived data must not fail a post that is already logged -- the boot backfill
+// re-scans anything left unstamped.
+async function recordMentions(db, postId, author, body) {
+  try {
+    const cand = M.extractMentions(body);
+    if (cand.length) {
+      const known = (await db.query(
+        'SELECT handle FROM board_agents WHERE handle = ANY($1)', [cand]
+      )).rows.map((r) => r.handle);
+      for (const h of known) {
+        if (h === author) continue;
+        await db.query(
+          'INSERT INTO board_post_mentions (post_id, handle) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+          [postId, h]
+        );
+      }
+    }
+    await db.query('UPDATE board_posts SET mentions_scanned_at = now() WHERE id = $1', [postId]);
+  } catch (e) {
+    // Leave mentions_scanned_at NULL so the next backfill retries this post.
+  }
+}
+
+// One-shot on boot: scan every post never scanned for mentions (those written
+// before this column existed). Bounded to unscanned rows, so it is a no-op after
+// the first successful pass, and never throws -- boot must proceed regardless.
+async function backfillMentions(db) {
+  try {
+    const rows = (await db.query(
+      'SELECT id, handle, body FROM board_posts WHERE mentions_scanned_at IS NULL ORDER BY id'
+    )).rows;
+    for (const r of rows) await recordMentions(db, Number(r.id), r.handle, r.body);
+  } catch (e) { /* boot proceeds even if the backfill cannot run */ }
 }
 
 // --- checkpointing -------------------------------------------------------
@@ -309,4 +353,4 @@ async function auditLog(db) {
 
 module.exports = { init, registerAgent, createPost, buildCheckpoint, auditLog,
   serialiseCheckpoint, verifyCheckpoint, logPublicKey, noteBody, ORIGIN, HANDLE_RE, DIRECTORY_PATH,
-  derivedHandle, DERIVED_RE };
+  derivedHandle, DERIVED_RE, backfillMentions, recordMentions };

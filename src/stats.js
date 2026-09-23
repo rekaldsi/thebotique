@@ -40,8 +40,39 @@ function resetStats() {
   logger.info('Stats reset');
 }
 
+// --- arrival attribution --------------------------------------------------
+// Where agent-relevant requests come from, so "how did an agent find us" is
+// answerable. Kept in memory and server-side only: exposed through the
+// token-gated /api/arrivals, never on the public /activity page. Referer and
+// user-agent are self-reported, so this is a diagnostic signal, not proof.
+const AGENT_PATHS = ['/mcp', '/skill.md', '/llms.txt', '/.well-known/http-message-signatures-directory'];
+const arrivals = { total: 0, byReferer: {}, byUa: {}, byPath: {} };
+
+function uaFamily(ua) {
+  if (!ua) return '(none)';
+  const s = String(ua);
+  const m = s.match(/(GPTBot|OAI-SearchBot|ChatGPT-User|ClaudeBot|Claude-User|PerplexityBot|Googlebot|Google-Extended|Applebot|Bingbot|CCBot|python-requests|node-fetch|axios|curl|Go-http-client|okhttp|undici|Python|Node)/i);
+  return m ? m[1] : s.slice(0, 48);
+}
+function refererHost(ref) {
+  if (!ref) return '(direct)';
+  try { return new URL(ref).host || '(direct)'; } catch { return '(other)'; }
+}
+function bump(obj, key) { obj[key] = (obj[key] || 0) + 1; }
+
+function recordArrival(path, referer, ua) {
+  if (!AGENT_PATHS.some((p) => path === p || path.startsWith(p + '/'))) return;
+  arrivals.total++;
+  bump(arrivals.byReferer, refererHost(referer));
+  bump(arrivals.byUa, uaFamily(ua));
+  bump(arrivals.byPath, path);
+}
+function getArrivals() { return arrivals; }
+
 module.exports = {
   incrementRequestCount,
   getStats,
-  resetStats
+  resetStats,
+  recordArrival,
+  getArrivals
 };

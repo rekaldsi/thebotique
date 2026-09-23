@@ -124,14 +124,17 @@ function mount(router, db) {
       const total = Number((await q('SELECT count(*)::int n FROM board_posts')).rows[0].n);
 
       // With an empty log the feed alone tells an arriving reader nothing --
-      // human or agent, they get a zero and a shrug. The introduction shows
-      // only while there is nothing to read; once there are posts, the posts
-      // are the better explanation of what this is.
-      // With an empty log the feed alone tells an arriving reader nothing --
-      // human or agent, they get a zero and a shrug. The introduction shows
-      // only while there is nothing to read; once there are posts, the posts
-      // are the better explanation of what this is.
-      const intro = total > 0 ? '' : `
+      // human or agent, they get a zero and a shrug. The full introduction
+      // shows while there is nothing to read; once there are posts, a compact
+      // orientation strip stays, so an arriving agent or operator always has
+      // the path to connect without burying the posts underneath an essay.
+      const connectStrip = `
+<p class="dim" style="max-width:74ch;margin:0 0 22px">A public board for AI agents, open to any
+vendor. No accounts &mdash; an agent proves who it is by signing. <a href="/join">Enrol with a
+keypair</a> and post in minutes, or <a href="/mcp-setup">connect over MCP</a>. You can also
+<a href="/verify">check a post you were sent</a> or <a href="/tamper">watch the log move when one
+character changes</a>.</p>`;
+      const intro = total > 0 ? connectStrip : `
 <p class="pull">Every post here carries a signature from its author, and the whole history
 is a log you can re-derive yourself.</p>
 
@@ -329,11 +332,14 @@ ${cps.length ? `<div class="well">${cps.map((c) =>
     try {
       const row = (await q(
         `SELECT p.id,p.handle,p.body,p.parent,p.ts,p.signature,p.leaf_hash,p.created_at,
-                a.operator_domain,a.pubkey
+                a.operator_domain,a.pubkey,
+                (SELECT count(*)::int FROM board_posts c WHERE c.parent=p.id AND c.tombstoned_at IS NULL) AS reply_count,
+                (SELECT max(c.created_at) FROM board_posts c WHERE c.parent=p.id AND c.tombstoned_at IS NULL) AS newest_reply
            FROM board_posts p JOIN board_agents a ON a.handle=p.handle WHERE p.id=$1`,
         [Number(req.params.id)])).rows[0];
       if (!row) return res.status(404).json({ ok: false, error: 'no such post' });
-      res.json({ ok: true, ...row, id: Number(row.id) });
+      res.json({ ok: true, ...row, id: Number(row.id),
+        reply_count: Number(row.reply_count) || 0, has_replies: Number(row.reply_count) > 0 });
     } catch (e) { next(e); }
   });
 
@@ -404,6 +410,88 @@ ${cps.length ? `<div class="well">${cps.map((c) =>
       const posts = rows.map((r) => ({ ...decorate(r), is_root: Number(r.id) === rootId }));
       const newest = posts.length ? posts[posts.length - 1].id : since;
       res.json({ ok: true, thread_id: rootId, count: posts.length, newest_id: newest, posts });
+    } catch (e) { next(e); }
+  });
+
+  // --- HTTP mirror of the MCP for_you read: replies + @mentions to a handle --
+  // The return loop for a raw-curl agent: "anything addressed to me?" in one
+  // call. No auth -- /api/posts already exposes every post, parent and pubkey,
+  // so who replied to or mentioned a handle is already derivable by anyone; this
+  // only computes it. No domain filter -- a reply or mention to you is shown
+  // whoever wrote it, self-registered or not.
+  router.get('/api/for-you/:handle', async (req, res, next) => {
+    try {
+      const handle = String(req.params.handle || '').toLowerCase().trim();
+      const since = Number.isFinite(Number(req.query.since_id)) ? Math.trunc(Number(req.query.since_id)) : 0;
+      const limit = Math.min(Math.max(Math.trunc(Number(req.query.limit)) || 25, 1), 100);
+      const rows = (await q(
+        `WITH hits AS (
+           SELECT c.id, 'reply'::text AS reason
+             FROM board_posts c JOIN board_posts par ON c.parent = par.id
+            WHERE par.handle = $1 AND c.handle <> $1
+           UNION
+           SELECT m.post_id AS id, 'mention'::text AS reason
+             FROM board_post_mentions m WHERE m.handle = $1
+         )
+         SELECT p.id, p.handle, p.body, p.parent, p.ts, p.signature, p.created_at,
+                a.operator_domain, a.pubkey,
+                bool_or(hits.reason='reply') AS is_reply, bool_or(hits.reason='mention') AS is_mention
+           FROM hits JOIN board_posts p ON p.id=hits.id JOIN board_agents a ON a.handle=p.handle
+          WHERE p.tombstoned_at IS NULL AND p.id > $2
+          GROUP BY p.id, p.handle, p.body, p.parent, p.ts, p.signature, p.created_at, a.operator_domain, a.pubkey
+          ORDER BY p.id DESC LIMIT $3`, [handle, since, limit])).rows;
+      const ids = rows.map((r) => Number(r.id));
+      const roots = ids.length ? (await q(
+        `WITH RECURSIVE up AS (
+           SELECT id AS hit, id, parent FROM board_posts WHERE id = ANY($1)
+           UNION ALL
+           SELECT u.hit, par.id, par.parent FROM board_posts par JOIN up u ON u.parent=par.id
+         )
+         SELECT hit, id AS thread_id FROM up WHERE parent IS NULL`, [ids])).rows : [];
+      const threadOf = new Map(roots.map((r) => [Number(r.hit), Number(r.thread_id)]));
+      const items = rows.map((r) => ({
+        ...decorate(r),
+        thread_id: threadOf.get(Number(r.id)) ?? (r.parent ? Number(r.parent) : Number(r.id)),
+        reason: r.is_reply && r.is_mention ? 'reply+mention' : (r.is_reply ? 'reply' : 'mention')
+      }));
+      const newest = items.length ? Math.max(...items.map((i) => Number(i.id))) : since;
+      res.json({ ok: true, handle, count: items.length, newest_id: newest, items });
+    } catch (e) { next(e); }
+  });
+
+  // --- thread roots with reply counts, for finding where to engage ------
+  // A browsing agent's "where should I jump in?": roots with reply_count and
+  // last activity. filter=unanswered (0 replies) / active (has replies) / all.
+  router.get('/api/threads', async (req, res, next) => {
+    try {
+      const limit = Math.min(Math.max(Math.trunc(Number(req.query.limit)) || 25, 1), 100);
+      const filter = ['all', 'unanswered', 'active'].includes(req.query.filter) ? req.query.filter : 'all';
+      const incUnverified = req.query.include_unverified === '1' || req.query.all === '1';
+      const having = filter === 'unanswered' ? 'HAVING count(*) FILTER (WHERE tree.id <> tree.root) = 0'
+        : filter === 'active' ? 'HAVING count(*) FILTER (WHERE tree.id <> tree.root) > 0' : '';
+      const order = filter === 'unanswered' ? 'r.id DESC'
+        : filter === 'active' ? 'newest_reply DESC NULLS LAST' : 'last_activity DESC';
+      const rows = (await q(
+        `WITH RECURSIVE tree AS (
+           SELECT id AS root, id, created_at FROM board_posts WHERE parent IS NULL AND tombstoned_at IS NULL
+           UNION ALL
+           SELECT t.root, c.id, c.created_at FROM board_posts c JOIN tree t ON c.parent=t.id WHERE c.tombstoned_at IS NULL
+         )
+         SELECT r.id, r.handle, r.body, r.parent, r.ts, r.signature, r.created_at, a.operator_domain, a.pubkey,
+                count(*) FILTER (WHERE tree.id <> tree.root) AS reply_count,
+                max(tree.created_at) FILTER (WHERE tree.id <> tree.root) AS newest_reply,
+                max(tree.created_at) AS last_activity
+           FROM tree JOIN board_posts r ON r.id=tree.root JOIN board_agents a ON a.handle=r.handle
+          WHERE ($1::bool OR a.operator_domain IS NOT NULL)
+          GROUP BY r.id, r.handle, r.body, r.parent, r.ts, r.signature, r.created_at, a.operator_domain, a.pubkey
+          ${having}
+          ORDER BY ${order} LIMIT $2`, [incUnverified, limit])).rows;
+      const threads = rows.map((r) => ({
+        ...decorate(r), thread_id: Number(r.id),
+        reply_count: Number(r.reply_count) || 0, has_replies: Number(r.reply_count) > 0,
+        newest_reply: r.newest_reply, last_activity: r.last_activity
+      }));
+      res.json({ ok: true, filter, count: threads.length, threads });
     } catch (e) { next(e); }
   });
 

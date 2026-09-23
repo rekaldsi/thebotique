@@ -88,6 +88,11 @@ function makePostDb({ agentPubkey, insertResult }) {
         if (!insertResult) throw new Error('createPost attempted to INSERT despite an invalid signature');
         return { rows: [insertResult] };
       }
+      // The @mention hook runs after a successful INSERT; tolerate its queries
+      // (its own tests below assert on them precisely).
+      if (s.startsWith('SELECT handle FROM board_agents WHERE handle = ANY')) return { rows: [] };
+      if (s.startsWith('INSERT INTO board_post_mentions')) return { rows: [] };
+      if (s.startsWith('UPDATE board_posts SET mentions_scanned_at')) return { rows: [] };
       throw new Error(`unexpected query in test fake db: ${s}`);
     }
   };
@@ -117,6 +122,62 @@ test('createPost: a signature made by a different key is rejected for a handle b
     S.createPost(db, { handle: 'mrmagoochi', body: 'attempted impersonation', parent: null, ts, signature: signatureFromB }),
     /signature does not verify/
   );
+});
+
+// --- @mention edges: resolve, skip self/unknown, stamp scanned ----------
+// recordMentions and backfillMentions are exercised directly against a fake db
+// that captures the mention INSERTs and the scanned-stamp UPDATEs.
+function makeMentionDb({ knownHandles = [], unscanned = [] } = {}) {
+  const calls = { inserts: [], stamps: [] };
+  return {
+    calls,
+    async query(sql, params) {
+      const s = sql.replace(/\s+/g, ' ').trim();
+      if (s.startsWith('SELECT handle FROM board_agents WHERE handle = ANY')) {
+        const asked = params[0] || [];
+        return { rows: knownHandles.filter((h) => asked.includes(h)).map((h) => ({ handle: h })) };
+      }
+      if (s.startsWith('INSERT INTO board_post_mentions')) {
+        calls.inserts.push({ post_id: params[0], handle: params[1] });
+        return { rows: [] };
+      }
+      if (s.startsWith('UPDATE board_posts SET mentions_scanned_at')) {
+        calls.stamps.push(params[0]);
+        return { rows: [] };
+      }
+      if (s.startsWith('SELECT id, handle, body FROM board_posts WHERE mentions_scanned_at IS NULL')) {
+        return { rows: unscanned };
+      }
+      throw new Error(`unexpected query in test fake db: ${s}`);
+    }
+  };
+}
+
+test('recordMentions: a resolvable, non-self @mention is recorded; an unknown one is dropped; the post is stamped', async () => {
+  const db = makeMentionDb({ knownHandles: ['host', 'mrmagoochi'] });
+  await S.recordMentions(db, 42, 'mrmagoochi', 'good point @host, but @nobody never registered');
+  assert.deepStrictEqual(db.calls.inserts, [{ post_id: 42, handle: 'host' }]);
+  assert.deepStrictEqual(db.calls.stamps, [42]);
+});
+
+test('recordMentions: a self-mention records nothing but the post is still stamped', async () => {
+  const db = makeMentionDb({ knownHandles: ['host'] });
+  await S.recordMentions(db, 43, 'host', 'note to self @host');
+  assert.deepStrictEqual(db.calls.inserts, []);
+  assert.deepStrictEqual(db.calls.stamps, [43]);
+});
+
+test('backfillMentions: scans every unscanned post exactly once', async () => {
+  const db = makeMentionDb({
+    knownHandles: ['host', 'mrmagoochi'],
+    unscanned: [
+      { id: 1, handle: 'mrmagoochi', body: 'hello @host' },
+      { id: 2, handle: 'host', body: 'no mentions in here' }
+    ]
+  });
+  await S.backfillMentions(db);
+  assert.deepStrictEqual(db.calls.inserts, [{ post_id: 1, handle: 'host' }]);
+  assert.deepStrictEqual([...db.calls.stamps].sort((x, y) => x - y), [1, 2]);
 });
 
 // --- auditLog: re-verification against what is actually stored -----------

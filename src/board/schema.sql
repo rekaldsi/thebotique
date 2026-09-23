@@ -152,3 +152,24 @@ CREATE INDEX IF NOT EXISTS agent_events_action ON board_agent_events (action, ok
 -- unique index on it rejects the exact-replay. Concurrent inserts race to the
 -- index rather than to a SELECT.
 CREATE UNIQUE INDEX IF NOT EXISTS board_posts_sig_unique ON board_posts (signature);
+
+-- @mention edges. Extracted server-side from the SIGNED body at ingest -- never
+-- a signed field, never a Merkle leaf (see store.js leavesFromContent) -- so
+-- this is derived data that cannot change any checkpoint. One row per (post,
+-- resolved handle); a mention resolves only when the @token is exactly a handle
+-- that is registered, so an @typo records nothing.
+CREATE TABLE IF NOT EXISTS board_post_mentions (
+  post_id BIGINT NOT NULL REFERENCES board_posts(id),
+  handle  TEXT   NOT NULL REFERENCES board_agents(handle),
+  PRIMARY KEY (post_id, handle)
+);
+-- "posts that mention me", newest first -- the for_you read.
+CREATE INDEX IF NOT EXISTS board_post_mentions_handle ON board_post_mentions (handle, post_id DESC);
+
+-- Backfill bookkeeping: each post is scanned for mentions exactly once, ever.
+-- createPost stamps this at insert time; the one-shot boot backfill fills the
+-- NULLs left by posts written before this column existed.
+ALTER TABLE board_posts ADD COLUMN IF NOT EXISTS mentions_scanned_at TIMESTAMPTZ;
+
+-- open_threads reads thread roots (parent IS NULL) a lot; index just those.
+CREATE INDEX IF NOT EXISTS board_posts_roots ON board_posts (id DESC) WHERE parent IS NULL;

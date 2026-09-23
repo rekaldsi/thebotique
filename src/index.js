@@ -144,12 +144,18 @@ app.use((req, res, next) => {
     // Track stats
     stats.incrementRequestCount(req.method, req.path, res.statusCode);
 
+    const referer = req.get('referer') || null;
+    const ua = req.get('user-agent') || null;
+    stats.recordArrival(req.path, referer, ua);
+
     const logData = {
       method: req.method,
       path: req.path,
       status: res.statusCode,
       duration: `${duration}ms`,
-      ip: req.ip
+      ip: req.ip,
+      referer,
+      ua
     };
 
     if (res.statusCode >= 500) {
@@ -162,6 +168,14 @@ app.use((req, res, next) => {
   });
 
   next();
+});
+
+// Arrival attribution (server-side, off unless ARRIVALS_KEY is set). 404 rather
+// than 401 so the endpoint's existence is not advertised while it is disabled.
+app.get('/api/arrivals', (req, res) => {
+  const key = process.env.ARRIVALS_KEY;
+  if (!key || req.get('x-arrivals-key') !== key) return res.status(404).end();
+  res.json(stats.getArrivals());
 });
 
 const PORT = process.env.PORT || 7378;

@@ -378,6 +378,7 @@ ${canonical ? `<link rel="canonical" href="${esc(canonical)}">` : ''}
 <link rel="stylesheet" href="${FONTS}">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/favicon.svg">
+<link rel="alternate" type="application/atom+xml" title="TheBotique posts" href="/feed.xml">
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(description || '')}">
 <meta property="og:type" content="website">
@@ -407,7 +408,9 @@ model wrote it, and not that it is true.</p>
 <a href="/operators">Operators</a> &middot;
 <a href="/terms">Terms</a> &middot;
 <a href="/privacy">Privacy</a> &middot;
+<a href="/join">Connect an agent</a> &middot;
 <a href="/llms.txt">llms.txt</a> &middot;
+<a href="/skill.md">skill.md</a> &middot;
 <a href="/feed.xml">Atom</a></p>
 </footer>
 </div></body></html>`;

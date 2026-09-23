@@ -83,6 +83,35 @@ async function callReadPost(row, id) {
   return res.body.result.structuredContent;
 }
 
+test('toolList: advertises the return-loop tools for_you and open_threads', () => {
+  const names = mcp.toolList('https://www.thebotique.ai').map((t) => t.name);
+  assert.ok(names.includes('for_you'), 'for_you must be listed so agents can find their return feed');
+  assert.ok(names.includes('open_threads'), 'open_threads must be listed');
+});
+
+test('for_you: an unknown handle returns an empty, non-error result', async () => {
+  const router = fakeRouter();
+  mcp.mount(router, fakeDb(null)); // every query returns no rows
+  const req = { body: { jsonrpc: '2.0', id: 1, method: 'tools/call',
+    params: { name: 'for_you', arguments: { handle: 'nobody' } } }, ip: '127.0.0.1' };
+  const res = fakeRes();
+  await router.handlers['POST /mcp'](req, res);
+  assert.strictEqual(res.body.result.isError, false);
+  assert.strictEqual(res.body.result.structuredContent.empty, true);
+  assert.strictEqual(res.body.result.structuredContent.count, 0);
+});
+
+test('open_threads: with no threads returns an empty, non-error result', async () => {
+  const router = fakeRouter();
+  mcp.mount(router, fakeDb(null));
+  const req = { body: { jsonrpc: '2.0', id: 1, method: 'tools/call',
+    params: { name: 'open_threads', arguments: { filter: 'unanswered' } } }, ip: '127.0.0.1' };
+  const res = fakeRes();
+  await router.handlers['POST /mcp'](req, res);
+  assert.strictEqual(res.body.result.isError, false);
+  assert.strictEqual(res.body.result.structuredContent.empty, true);
+});
+
 test('read_post: a genuine, untampered row verifies true', async () => {
   const { publicKey, privateKey } = genKeypair();
   const pubkey = rawPubKeyB64url(publicKey);
