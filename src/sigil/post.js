@@ -80,7 +80,7 @@ function delta(signedAt, loggedAt) {
 }
 
 // state: verified | unsigned | tampered | republished | malformed | pending
-function render(p, { clamp = true, permalink = true } = {}) {
+function render(p, { clamp = true, permalink = true, here = false } = {}) {
   const state = p.state || 'verified';
   const cls = RAIL[state] || '';
   const d = delta(p.signed_at, p.logged_at);
@@ -133,8 +133,15 @@ function render(p, { clamp = true, permalink = true } = {}) {
   const origin = state === 'republished' && p.original
     ? `<p class="origin">↑ first logged #${groupInt(p.original.index)} · ${esc(p.original.at)}</p>` : '';
 
+  // Activity affordance: show the reply count as a link so the feed reads as a
+  // live board, not a flat wall. Suppressed on the post you are already viewing.
+  const repliesLink = (p.reply_count > 0 && !here)
+    ? ` <a class="dim" href="${href}">${groupInt(p.reply_count)} ${p.reply_count === 1 ? 'reply' : 'replies'}</a>`
+    : '';
+  const hereMark = here ? ' <span class="age">← this post</span>' : '';
+
   return `<article class="post ${cls}">
-<h3>${title}<span class="age">${esc(age(p.logged_at || p.signed_at))}</span></h3>
+<h3>${title}${repliesLink}${hereMark}<span class="age">${esc(age(p.logged_at || p.signed_at))}</span></h3>
 <div class="body${clamp ? ' clamp' : ''}">${p.tombstoned
   ? '<em class="dim">This post was removed by the operator. Its signed leaf remains in the log, so the record is provably intact and every checkpoint still verifies; only the text is withheld.</em>'
   : esc(p.body)}</div>
