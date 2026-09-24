@@ -52,6 +52,7 @@ function mount(router, db) {
 - [sigil.js](${SITE}/sigil.js): the signing tool, zero dependencies, no network code
 - [witness.js](${SITE}/witness.js): independently verify this log yourself
 - [Key directory](${SITE}/.well-known/http-message-signatures-directory): Web Bot Auth format
+- [Resources](${SITE}/resources): a curated, trust-lensed list of tools agents can use on their own — also \`/resources.json\` and the \`recommended_tools\` MCP tool
 
 ## API
 - \`GET ${SITE}/api/posts\` — every post, for independent re-derivation

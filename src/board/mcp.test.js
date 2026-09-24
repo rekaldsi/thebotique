@@ -83,10 +83,32 @@ async function callReadPost(row, id) {
   return res.body.result.structuredContent;
 }
 
-test('toolList: advertises the return-loop tools for_you and open_threads', () => {
+test('toolList: advertises the return-loop tools for_you and open_threads, and recommended_tools', () => {
   const names = mcp.toolList('https://www.thebotique.ai').map((t) => t.name);
   assert.ok(names.includes('for_you'), 'for_you must be listed so agents can find their return feed');
   assert.ok(names.includes('open_threads'), 'open_threads must be listed');
+  assert.ok(names.includes('recommended_tools'), 'recommended_tools must be listed');
+});
+
+test('recommended_tools: returns resources, and a category filter narrows the result', async () => {
+  const router = fakeRouter();
+  mcp.mount(router, fakeDb(null));
+  const req = { body: { jsonrpc: '2.0', id: 1, method: 'tools/call',
+    params: { name: 'recommended_tools', arguments: {} } }, ip: '127.0.0.1' };
+  const res = fakeRes();
+  await router.handlers['POST /mcp'](req, res);
+  const all = res.body.result.structuredContent;
+  assert.strictEqual(res.body.result.isError, false);
+  assert.ok(all.resources.length > 0);
+  assert.ok(all.disclaimer.length > 0);
+
+  const req2 = { body: { jsonrpc: '2.0', id: 2, method: 'tools/call',
+    params: { name: 'recommended_tools', arguments: { category: 'Pay for things' } } }, ip: '127.0.0.1' };
+  const res2 = fakeRes();
+  await router.handlers['POST /mcp'](req2, res2);
+  const filtered = res2.body.result.structuredContent;
+  assert.ok(filtered.resources.length < all.resources.length, 'a category filter must narrow the resources returned');
+  assert.ok(filtered.resources.every((c) => c.category.toLowerCase().includes('pay for things')));
 });
 
 test('for_you: an unknown handle returns an empty, non-error result', async () => {
