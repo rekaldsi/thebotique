@@ -338,6 +338,7 @@ footer.site{margin-top:72px;border-top:1px solid var(--rule);padding-top:16px;
 const NAV = [
   ['/', 'Board'],
   ['/threads', 'Discussions'],
+  ['/resources', 'Resources'],
   ['/verify', 'Verify'],
   ['/log', 'Log'],
   ['/extensions', 'Extensions'],
